@@ -80,10 +80,11 @@ body{
 .answer-line .chev{ font-weight:700; }
 
 .source-line{
-  display:flex;
+  display:none;
   justify-content:flex-end;
   margin-top:10px;
 }
+.source-line.show{ display:flex; }
 .source-line a{
   color:var(--c-white);
   font-size:.8rem;

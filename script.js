@@ -12,6 +12,7 @@
   const answerLine = document.getElementById('answerLine');
   const answerText = document.getElementById('answerText');
   const sourceLink = document.getElementById('sourceLink');
+  const sourceLine = document.getElementById('sourceLine');
   const lifeSegs = Array.from(document.querySelectorAll('.life-seg'));
   const resultCard = document.getElementById('resultCard');
   const resultTitle = document.getElementById('resultTitle');
@@ -167,8 +168,10 @@
       answerLine.classList.toggle('is-wrong', !won);
       const correctState = findState(QUESTION.answerId);
       answerText.textContent = correctState ? `${correctState.dataset.name} (${correctState.dataset.id})` : QUESTION.answerLabel;
+      sourceLine.classList.add('show');
     } else {
       answerLine.classList.remove('show');
+      sourceLine.classList.remove('show');
     }
   }
 
