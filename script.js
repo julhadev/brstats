@@ -1,21 +1,16 @@
 (function(){
-  // ---- Single hardcoded question (front-end only test) ----
-  const QUESTION = {
-    id: "876",
-    prompt: "Qual o estado mais recentemente criado?",
-    answerId: "TO"
-  };
   const MAX_CHANCES = 3;
-  const STORAGE_KEY = "branks_progress_v1";
-
-  const todayKey = new Date().toISOString().slice(0,10);
+  const STORAGE_KEY = "brstats_progress_v1";
+  const CSV_PATH = "questions.csv";
 
   const map = document.getElementById('brmap');
   const states = Array.from(document.querySelectorAll('#brmap .state'));
   const marker = document.getElementById('stateMarker');
+  const gameTitle = document.getElementById('gameTitle');
   const questionText = document.getElementById('questionText');
   const answerLine = document.getElementById('answerLine');
   const answerText = document.getElementById('answerText');
+  const sourceLink = document.getElementById('sourceLink');
   const lifeSegs = Array.from(document.querySelectorAll('.life-seg'));
   const resultCard = document.getElementById('resultCard');
   const resultTitle = document.getElementById('resultTitle');
@@ -27,7 +22,77 @@
   const helpOverlay = document.getElementById('helpOverlay');
   const closeHelp = document.getElementById('closeHelp');
 
-  questionText.textContent = QUESTION.prompt;
+  // ---- local (user's system) date, not UTC ----
+  function localDateKey(d){
+    d = d || new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
+  function formatDate(iso){
+    const [y,m,d] = iso.split('-');
+    return `${d}.${m}.${y}`;
+  }
+
+  const todayKey = localDateKey();
+
+  // ---- tiny CSV parser (handles quoted fields) ----
+  function parseCSV(text){
+    const lines = text.trim().split(/\r?\n/);
+    const rows = [];
+    for(let i=1;i<lines.length;i++){ // skip header
+      const line = lines[i];
+      if(!line.trim()) continue;
+      const fields = [];
+      let cur = '', inQuotes = false;
+      for(let j=0;j<line.length;j++){
+        const ch = line[j];
+        if(ch === '"'){
+          if(inQuotes && line[j+1] === '"'){ cur += '"'; j++; }
+          else inQuotes = !inQuotes;
+        } else if(ch === ',' && !inQuotes){
+          fields.push(cur); cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      fields.push(cur);
+      rows.push(fields);
+    }
+    return rows;
+  }
+
+  function rowsToQuestions(rows){
+    return rows.map(f => {
+      const [index, date, question, answer, source] = f;
+      const idMatch = answer.match(/\(([A-Z]{2})\)/);
+      return {
+        index: index.trim(),
+        date: date.trim(),
+        prompt: question,
+        answerLabel: answer,
+        answerId: idMatch ? idMatch[1] : null,
+        source: source
+      };
+    }).sort((a,b) => a.date.localeCompare(b.date));
+  }
+
+  function pickTodayQuestion(questions){
+    // most recent question whose date <= today; before the first date, use the first
+    let chosen = questions[0];
+    for(const q of questions){
+      if(q.date <= todayKey) chosen = q;
+    }
+    return chosen;
+  }
+
+  function findState(id){ return states.find(s => s.dataset.id === id); }
+
+  let QUESTION = null;
+  let progress = {};
+  let attempts = [];
+  let finished = false;
 
   function loadProgress(){
     try{
@@ -35,17 +100,13 @@
       return raw ? JSON.parse(raw) : {};
     }catch(e){ return {}; }
   }
-  function saveProgress(data){
-    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){}
+  function saveProgress(){
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)); }catch(e){}
   }
-
-  let progress = loadProgress();
-  let today = progress[todayKey];
-
-  let attempts = today ? today.attempts.slice() : []; // [{id, correct}]
-  let finished = today ? today.finished : false;
-
-  function findState(id){ return states.find(s => s.dataset.id === id); }
+  function persist(){
+    progress[todayKey] = { attempts, finished, index: QUESTION.index };
+    saveProgress();
+  }
 
   function renderLifebar(){
     lifeSegs.forEach((seg, i) => {
@@ -53,6 +114,17 @@
       const a = attempts[i];
       if(a) seg.classList.add(a.correct ? 'correct' : 'wrong');
     });
+  }
+
+  function placeMarker(stateEl){
+    const cx = parseFloat(stateEl.dataset.cx);
+    const cy = parseFloat(stateEl.dataset.cy);
+    if(isNaN(cx) || isNaN(cy)) return;
+    const vb = map.viewBox.baseVal;
+    marker.style.left = (cx / vb.width * 100) + "%";
+    marker.style.top = (cy / vb.height * 100) + "%";
+    marker.textContent = "+";
+    marker.classList.add('show');
   }
 
   function renderMapState(){
@@ -72,26 +144,13 @@
     }
   }
 
-  function placeMarker(stateEl){
-    const cx = parseFloat(stateEl.dataset.cx);
-    const cy = parseFloat(stateEl.dataset.cy);
-    if(isNaN(cx) || isNaN(cy)) return;
-    const vb = map.viewBox.baseVal;
-    const pctX = (cx / vb.width) * 100;
-    const pctY = (cy / vb.height) * 100;
-    marker.style.left = pctX + "%";
-    marker.style.top = pctY + "%";
-    marker.textContent = "+";
-    marker.classList.add('show');
-  }
-
   function renderAnswerLine(){
     const won = attempts.some(a => a.correct);
     if(finished){
       answerLine.classList.add('show');
       answerLine.classList.toggle('is-wrong', !won);
       const correctState = findState(QUESTION.answerId);
-      answerText.textContent = correctState ? `${correctState.dataset.name} (${correctState.dataset.id})` : QUESTION.answerId;
+      answerText.textContent = correctState ? `${correctState.dataset.name} (${correctState.dataset.id})` : QUESTION.answerLabel;
     } else {
       answerLine.classList.remove('show');
     }
@@ -114,7 +173,7 @@
     if(!finished){ resultCard.classList.remove('show'); return; }
     const won = attempts.some(a => a.correct);
     resultTitle.textContent = won ? "Parabéns!!" : "Que pena!";
-    resultMeta.textContent = `branks#${QUESTION.id} (${formatDate(todayKey)})`;
+    resultMeta.textContent = `brstats#${QUESTION.index} (${formatDate(todayKey)})`;
     resultEmojis.innerHTML = "";
     buildEmojiData().forEach(state => {
       const span = document.createElement('span');
@@ -124,19 +183,9 @@
     resultCard.classList.add('show');
   }
 
-  function formatDate(iso){
-    const [y,m,d] = iso.split('-');
-    return `${d}.${m}.${y}`;
-  }
-
   function setMapInteractive(on){
     map.classList.toggle('game-live', on);
     states.forEach(s => s.classList.toggle('disabled', !on));
-  }
-
-  function persist(){
-    progress[todayKey] = { attempts, finished };
-    saveProgress(progress);
   }
 
   function endGame(){
@@ -163,33 +212,57 @@
     }
   }
 
-  states.forEach(s => {
-    s.addEventListener('click', () => handleGuess(s));
-  });
+  function wireEvents(){
+    states.forEach(s => s.addEventListener('click', () => handleGuess(s)));
+    helpBtn.addEventListener('click', () => helpOverlay.classList.add('show'));
+    closeHelp.addEventListener('click', () => helpOverlay.classList.remove('show'));
+    helpOverlay.addEventListener('click', (e) => { if(e.target === helpOverlay) helpOverlay.classList.remove('show'); });
+    closeResult.addEventListener('click', () => resultCard.classList.remove('show'));
 
-  helpBtn.addEventListener('click', () => helpOverlay.classList.add('show'));
-  closeHelp.addEventListener('click', () => helpOverlay.classList.remove('show'));
-  helpOverlay.addEventListener('click', (e) => { if(e.target === helpOverlay) helpOverlay.classList.remove('show'); });
-  closeResult.addEventListener('click', () => resultCard.classList.remove('show'));
+    copyBtn.addEventListener('click', () => {
+      const text = `brstats#${QUESTION.index} (${formatDate(todayKey)})\n${buildEmojiText()}\nhttps://brstats.io`;
+      const done = () => {
+        copyBtn.textContent = "COPIADO!";
+        copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.textContent = "COPIAR"; copyBtn.classList.remove('copied'); }, 1500);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(done);
+      } else {
+        done();
+      }
+    });
+  }
 
-  copyBtn.addEventListener('click', () => {
-    const text = `branks#${QUESTION.id} (${formatDate(todayKey)})\n${buildEmojiText()}\nhttps://branks.io`;
-    const done = () => {
-      copyBtn.textContent = "COPIADO!";
-      copyBtn.classList.add('copied');
-      setTimeout(() => { copyBtn.textContent = "COPIAR"; copyBtn.classList.remove('copied'); }, 1500);
-    };
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(text).then(done).catch(done);
-    } else {
-      done();
+  async function init(){
+    let text;
+    try{
+      const res = await fetch(CSV_PATH);
+      text = await res.text();
+    }catch(e){
+      questionText.textContent = "Não foi possível carregar as perguntas (questions.csv). Sirva os arquivos por um servidor local/HTTP, não abrindo o HTML direto.";
+      return;
     }
-  });
 
-  // ---- init ----
-  setMapInteractive(!finished);
-  renderMapState();
-  renderLifebar();
-  renderAnswerLine();
-  renderResultCard();
+    const questions = rowsToQuestions(parseCSV(text));
+    QUESTION = pickTodayQuestion(questions);
+
+    gameTitle.textContent = `brstats.io#${QUESTION.index}`;
+    questionText.textContent = QUESTION.prompt;
+    sourceLink.href = QUESTION.source;
+
+    progress = loadProgress();
+    const today = progress[todayKey];
+    attempts = today ? today.attempts.slice() : [];
+    finished = today ? today.finished : false;
+
+    wireEvents();
+    setMapInteractive(!finished);
+    renderMapState();
+    renderLifebar();
+    renderAnswerLine();
+    renderResultCard();
+  }
+
+  init();
 })();
