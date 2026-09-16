@@ -6,6 +6,7 @@
   const map = document.getElementById('brmap');
   const states = Array.from(document.querySelectorAll('#brmap .state'));
   const marker = document.getElementById('stateMarker');
+  const hoverLabel = document.getElementById('hoverLabel');
   const gameTitle = document.getElementById('gameTitle');
   const questionText = document.getElementById('questionText');
   const answerLine = document.getElementById('answerLine');
@@ -116,15 +117,30 @@
     });
   }
 
-  function placeMarker(stateEl){
+  function positionOverlay(el, stateEl){
     const cx = parseFloat(stateEl.dataset.cx);
     const cy = parseFloat(stateEl.dataset.cy);
-    if(isNaN(cx) || isNaN(cy)) return;
+    if(isNaN(cx) || isNaN(cy)) return false;
     const vb = map.viewBox.baseVal;
-    marker.style.left = (cx / vb.width * 100) + "%";
-    marker.style.top = (cy / vb.height * 100) + "%";
+    el.style.left = (cx / vb.width * 100) + "%";
+    el.style.top = (cy / vb.height * 100) + "%";
+    return true;
+  }
+
+  function placeMarker(stateEl){
+    if(!positionOverlay(marker, stateEl)) return;
     marker.textContent = "+";
     marker.classList.add('show');
+  }
+
+  function showHoverLabel(stateEl){
+    if(!positionOverlay(hoverLabel, stateEl)) return;
+    hoverLabel.textContent = stateEl.dataset.id;
+    hoverLabel.classList.add('show');
+  }
+
+  function hideHoverLabel(){
+    hoverLabel.classList.remove('show');
   }
 
   function renderMapState(){
@@ -195,9 +211,11 @@
     renderResultCard();
     setMapInteractive(false);
     renderMapState();
+    hideHoverLabel();
   }
 
   function handleGuess(stateEl){
+    if(!QUESTION) return;
     if(finished) return;
     if(attempts.length >= MAX_CHANCES) return;
     const id = stateEl.dataset.id;
@@ -213,7 +231,14 @@
   }
 
   function wireEvents(){
-    states.forEach(s => s.addEventListener('click', () => handleGuess(s)));
+    states.forEach(s => {
+      s.addEventListener('click', () => handleGuess(s));
+      s.addEventListener('mouseenter', () => {
+        if(s.classList.contains('disabled')) return;
+        showHoverLabel(s);
+      });
+      s.addEventListener('mouseleave', hideHoverLabel);
+    });
     helpBtn.addEventListener('click', () => helpOverlay.classList.add('show'));
     closeHelp.addEventListener('click', () => helpOverlay.classList.remove('show'));
     helpOverlay.addEventListener('click', (e) => { if(e.target === helpOverlay) helpOverlay.classList.remove('show'); });
@@ -235,6 +260,8 @@
   }
 
   async function init(){
+    wireEvents(); // attach listeners right away; handleGuess no-ops until QUESTION is loaded
+
     let text;
     try{
       const res = await fetch(CSV_PATH);
@@ -256,7 +283,6 @@
     attempts = today ? today.attempts.slice() : [];
     finished = today ? today.finished : false;
 
-    wireEvents();
     setMapInteractive(!finished);
     renderMapState();
     renderLifebar();
