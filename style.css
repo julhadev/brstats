@@ -1,7 +1,6 @@
 :root{
   --c-black:#05150F;      /* fundo geral, caixas de texto */
   --c-panel:#44624D;      /* barra de título, estado não selecionado */
-  --c-section:#24332E;    /* fundo por trás do mapa */
   --c-correct:#A7EF00;
   --c-wrong:#FF7D7F;
   --c-white:#F2F5F0;
@@ -83,7 +82,6 @@ body{
 /* ---- Map area ---- */
 .map-wrap{
   position:relative;
-  background:var(--c-section);
   padding:18px 8px 14px;
   display:flex;
   justify-content:center;
